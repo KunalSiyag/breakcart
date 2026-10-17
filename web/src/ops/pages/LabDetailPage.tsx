@@ -77,7 +77,10 @@ function RunPanel({ lab }: { lab: Lab }) {
   const run = async (variant: LabVariant) => {
     setStarting(variant);
     try {
-      await opsStore.startLab(lab.id, variant);
+      // Same traffic for both variants, as the steps promise: keep the current load multiplier
+      // (the one the Load slider shows) instead of letting the control plane default to ×1.
+      const m = loadgen?.multiplier;
+      await opsStore.startLab(lab.id, variant, typeof m === 'number' && m > 0 ? m : undefined);
       setLastRun({ variant, at: Date.now() });
       toast.push('ok', `Lab “${lab.title}” running ${variant === 'broken' ? 'BROKEN' : 'FIXED'}`);
     } catch (e) {

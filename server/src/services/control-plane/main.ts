@@ -120,8 +120,9 @@ async function resetData() {
       break;
     } catch (err) {
       const code = (err as { pgCode?: string }).pgCode;
-      if (attempt >= 5 || (code !== '40P01' && code !== '55P03')) throw err;
-      logger.warn({ code, attempt }, 'reset hit a lock conflict, retrying');
+      // deadlock, lock_timeout, or statement_timeout while in-flight work drains: the reset is idempotent
+      if (attempt >= 5 || !['40P01', '55P03', '57014'].includes(code ?? '')) throw err;
+      logger.warn({ code, attempt }, 'reset hit a lock conflict or timeout, retrying');
       await sleep(200 * attempt);
     }
   }

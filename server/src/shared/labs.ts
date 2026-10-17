@@ -38,11 +38,11 @@ export const LABS: Lab[] = [
     difficulty: 'beginner',
     summary: 'A read-modify-write race in stock reservation oversells the hottest deal.',
     story:
-      'Midnight. The Nimbus X15 is ₹79,999 with 100 units. The stock counter ticks down more slowly than orders come in, every request is a 2xx, and by the time "available" reaches zero the store has already promised more phones than it has. The warehouse calls at 00:07.',
+      'Midnight. The Nimbus X15 is ₹79,999 with 100 units. The stock counter ticks down more slowly than orders come in, nothing returns a 5xx, and by the time "available" reaches zero the store has already promised more phones than it has. The warehouse calls at 00:07.',
     symptoms: [
       'Integrity panel: "Oversold units" > 0 and climbing for HOT-0001 / HOT-0012',
       '`available` lags behind reservations: it reaches zero only after more units than exist have been claimed',
-      'No errors anywhere — every request is a 2xx',
+      'No 5xx anywhere — the error rate stays at 0%',
     ],
     watch: ['Business invariants → Oversold units', 'inventory_reservations_total{result="ok"} vs stock', 'Grafana → Business → hot SKU available units'],
     rootCause:

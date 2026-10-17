@@ -21,6 +21,14 @@ including 5 game days, a React storefront that lets you *feel* the latency, a li
 
 > Brands, products and prices are fictional. Prices are in INR (₹).
 
+## Demo
+
+![The oversell-race lab, broken then fixed on the same traffic: the error rate reads 0% both times, but only the broken run oversells](docs/media/breakcart-demo.gif)
+
+The oversell-race lab, run broken and then fixed on the same traffic (sped up): the error rate reads 0% both times,
+and only the business-invariant auditor tells them apart. Full 50-second video:
+[`docs/media/breakcart-demo.mp4`](docs/media/breakcart-demo.mp4).
+
 ## Screenshots
 
 **Mission Control** (`/live`): the live storefront next to the system behind it, here at the peak of a midnight
@@ -28,7 +36,7 @@ flash sale on the hardened build.
 
 ![Mission Control: the live storefront beside a map of every service, during a midnight flash sale](docs/images/mission-control-healthy.png)
 
-**The bug that never returns a 500.** During the oversell lab every request succeeds, and only the business-invariant
+**The bug that never returns a 500.** During the oversell lab the error rate stays at 0%, and only the business-invariant
 auditor notices the units sold beyond physical stock.
 
 ![The business-invariants panel during the oversell lab](docs/images/invariants-oversell.png)
