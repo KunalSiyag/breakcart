@@ -1,0 +1,955 @@
+# BreakCart — alerting rules
+#
+# Every alert carries:
+#   labels.severity       critical | warning | info
+#   labels.lab            the lab that teaches this failure mode (docs/labs/<lab>.md)
+#   annotations.runbook   where to start investigating
+#   annotations.summary / description  — what is wrong and what to look at
+#
+# There is no Alertmanager in this stack: firing alerts are visible in the Prometheus
+# UI (http://localhost:9091/alerts), in the "Firing alerts" table of the Grafana war
+# room (it reads the synthetic ALERTS series) and as dashboard annotations.
+#
+# `for:` is kept short because lab runs last minutes. Symptom (SLO) alerts page;
+# cause alerts are mostly warnings that tell you *where* to look.
+
+groups:
+  # ======================================================================= SLO burn rate
+  #
+  # Multi-window, multi-burn-rate alerts (Google SRE workbook ch. 5), with the
+  # windows compressed for minute-long lab runs:
+  #
+  #   alert        long window  short window  burn rate  error-ratio threshold
+  #   fast burn    5m           1m            14.4x      14.4 * budget
+  #   slow burn    30m          5m            6x         6 * budget
+  #
+  # The long window proves the problem is significant, the short window proves it is
+  # still happening (so the alert resolves quickly after the fix). The extra
+  # `slo:sli_total:*` term is a low-traffic guard: 1 error out of 3 requests is not
+  # an outage.
+  - name: breakcart.slo.alerts
+    rules:
+      - alert: CheckoutAvailabilityFastBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate5m{slo="checkout-availability"} > (14.4 * 0.005)
+            and
+            slo:sli_error:ratio_rate1m{slo="checkout-availability"} > (14.4 * 0.005)
+          )
+          and
+          slo:sli_total:rate1m{slo="checkout-availability"} > 0.2
+        labels:
+          severity: critical
+          lab: thundering-herd
+        annotations:
+          summary: "Checkout is burning its 99.5% availability budget at >14.4x"
+          description: "{{ $value | humanizePercentage }} of checkout/pay requests at the gateway returned 5xx over the last 5m (budget: 0.5%). Customers cannot buy. Check the war room: errors by status, breakers, DB pool waiting, PSP results."
+          runbook: docs/labs/thundering-herd.md
+          related_labs: "pool-exhaustion, retry-storm, cascading-failure, payment-limbo, overload-collapse, redis-blip"
+          triage: "docs/observability.md#triage-an-slo-alert"
+
+      - alert: CheckoutAvailabilitySlowBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate30m{slo="checkout-availability"} > (6 * 0.005)
+            and
+            slo:sli_error:ratio_rate5m{slo="checkout-availability"} > (6 * 0.005)
+          )
+          and
+          slo:sli_total:rate5m{slo="checkout-availability"} > 0.1
+        labels:
+          severity: warning
+          lab: thundering-herd
+        annotations:
+          summary: "Checkout availability budget is burning at >6x"
+          description: "{{ $value | humanizePercentage }} of checkout/pay requests failed with 5xx over the last 30m. Not an outage, but the error budget will not survive the sale at this rate."
+          runbook: docs/labs/thundering-herd.md
+          related_labs: "pool-exhaustion, retry-storm, cascading-failure, payment-limbo"
+          triage: "docs/observability.md#triage-an-slo-alert"
+
+      - alert: GatewayLatencyFastBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate5m{slo="gateway-latency"} > (14.4 * 0.01)
+            and
+            slo:sli_error:ratio_rate1m{slo="gateway-latency"} > (14.4 * 0.01)
+          )
+          and
+          slo:sli_total:rate1m{slo="gateway-latency"} > 0.2
+        labels:
+          severity: critical
+          lab: overload-collapse
+        annotations:
+          summary: "Gateway latency SLO (99% < 1s) burning at >14.4x"
+          description: "{{ $value | humanizePercentage }} of /api requests took longer than 1s over the last 5m (budget: 1%). Look for queueing: gateway inflight, event-loop lag, DB pool waiting, slow upstreams."
+          runbook: docs/labs/overload-collapse.md
+          related_labs: "cascading-failure, slow-search, logging-meltdown, gc-pauses, pool-exhaustion, cache-stampede"
+          triage: "docs/observability.md#triage-an-slo-alert"
+
+      - alert: GatewayLatencySlowBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate30m{slo="gateway-latency"} > (6 * 0.01)
+            and
+            slo:sli_error:ratio_rate5m{slo="gateway-latency"} > (6 * 0.01)
+          )
+          and
+          slo:sli_total:rate5m{slo="gateway-latency"} > 0.1
+        labels:
+          severity: warning
+          lab: overload-collapse
+        annotations:
+          summary: "Gateway latency SLO burning at >6x"
+          description: "{{ $value | humanizePercentage }} of /api requests were slower than 1s over the last 30m."
+          runbook: docs/labs/overload-collapse.md
+          related_labs: "cascading-failure, slow-search, logging-meltdown, gc-pauses"
+          triage: "docs/observability.md#triage-an-slo-alert"
+
+  # ======================================================================= data integrity
+  # The control plane audits the database every few seconds and exports what it
+  # finds as integrity_violations{kind}. Every one of these should always be 0.
+  - name: breakcart.integrity.alerts
+    rules:
+      - alert: IntegrityOversoldUnits
+        expr: max by (kind) (integrity_violations{kind="oversold_units"}) > 0
+        labels:
+          severity: critical
+          lab: oversell-race
+        annotations:
+          summary: "Oversell: {{ $value }} units sold that did not exist"
+          description: "More units were claimed than were in stock. Classic lost update in read-modify-write inventory code (flag inventory.reserve)."
+          runbook: docs/labs/oversell-race.md
+
+      - alert: IntegrityPaidUncommitted
+        expr: max(integrity_violations{kind="paid_uncommitted"}) > 0
+        for: 0s
+        labels:
+          severity: critical
+          lab: retry-storm
+        annotations:
+          summary: "{{ $value }} paid orders whose stock was never committed"
+          description: "The customer paid, but the stock hold never became a sale. When the hold expires the unit goes back on sale and can be sold twice — and the oversold check cannot see it. Orders retries failed commits; this means a hold expired first. Reconcile manually."
+          runbook: docs/labs/retry-storm.md
+
+      - alert: IntegrityNegativeStock
+        expr: max by (kind) (integrity_violations{kind="negative_stock_skus"}) > 0
+        labels:
+          severity: critical
+          lab: oversell-race
+        annotations:
+          summary: "{{ $value }} SKUs have negative available stock"
+          description: "available < 0 can only happen when concurrent reservations bypass the stock check."
+          runbook: docs/labs/oversell-race.md
+
+      - alert: IntegrityDuplicateCharges
+        expr: max by (kind) (integrity_violations{kind="duplicate_charges"}) > 0
+        labels:
+          severity: critical
+          lab: double-charge
+        annotations:
+          summary: "{{ $value }} customers were charged more than once"
+          description: "Retries or double-clicks on pay reached the PSP twice. Missing idempotency keys (flag orders.idempotency)."
+          runbook: docs/labs/double-charge.md
+
+      - alert: IntegrityOrphanCharges
+        expr: max by (kind) (integrity_violations{kind="orphan_charges"}) > 0
+        labels:
+          severity: critical
+          lab: payment-limbo
+        annotations:
+          summary: "{{ $value }} PSP charges have no paid order (money taken, no order)"
+          description: "Usually a PSP timeout that was treated as a failure while the PSP actually charged (flag orders.paymentTimeout)."
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: IntegrityDuplicateOrders
+        expr: max by (kind) (integrity_violations{kind="duplicate_orders"}) > 0
+        labels:
+          severity: warning
+          lab: double-charge
+        annotations:
+          summary: "{{ $value }} duplicate orders created"
+          description: "The same checkout was processed more than once (double click or client retry without an Idempotency-Key being honoured)."
+          runbook: docs/labs/double-charge.md
+
+      - alert: IntegrityCouponOverRedemption
+        expr: max by (kind) (integrity_violations{kind="coupon_over_redemptions"}) > 0
+        labels:
+          severity: warning
+          lab: coupon-overrun
+        annotations:
+          summary: "Limited coupon redeemed {{ $value }} times past its cap"
+          description: "check-then-act on the coupon counter (flag orders.coupon)."
+          runbook: docs/labs/coupon-overrun.md
+
+      - alert: IntegrityPriceMismatch
+        expr: max by (kind) (integrity_violations{kind="price_mismatches"}) > 0
+        labels:
+          severity: warning
+          lab: stale-price
+        annotations:
+          summary: "{{ $value }} orders charged a price that differs from the source of truth"
+          description: "Stale cached prices reached checkout (flags catalog.priceInvalidation, orders.pricing)."
+          runbook: docs/labs/stale-price.md
+
+      - alert: IntegrityStuckOrders
+        expr: max by (kind) (integrity_violations{kind="stuck_orders"}) > 0
+        for: 30s
+        labels:
+          severity: warning
+          lab: payment-limbo
+        annotations:
+          summary: "{{ $value }} orders stuck in a non-terminal payment state"
+          description: "Orders are sitting in PAYMENT_IN_PROGRESS / PAYMENT_PENDING with nobody resolving them. Is the reconciler running?"
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: IntegrityLostEvents
+        expr: max by (kind) (integrity_violations{kind="lost_events"}) > 0
+        labels:
+          severity: warning
+          lab: lost-events
+        annotations:
+          summary: "{{ $value }} paid orders never reached fulfillment"
+          description: "The order committed but its event was never published (dual write, flag orders.eventPublishing)."
+          runbook: docs/labs/lost-events.md
+
+      - alert: IntegrityPhantomHeldUnits
+        expr: max by (kind) (integrity_violations{kind="phantom_held_units"}) > 0
+        for: 30s
+        labels:
+          severity: warning
+          lab: phantom-sellout
+        annotations:
+          summary: "{{ $value }} units held by abandoned reservations"
+          description: "Stock shows as sold out while units sit in reservations nobody will pay for (flag inventory.reservationTtl)."
+          runbook: docs/labs/phantom-sellout.md
+
+      - alert: IntegrityCheckerSilent
+        expr: absent(integrity_violations)
+        for: 1m
+        labels:
+          severity: warning
+          lab: none
+        annotations:
+          summary: "No integrity_violations series: the integrity checker is not reporting"
+          description: "Without the checker you cannot see oversells or double charges. Is control-plane up and scraped?"
+          runbook: "docs/observability.md#alert-catalogue"
+
+  # ======================================================================= saturation
+  - name: breakcart.saturation.alerts
+    rules:
+      - alert: DbPoolWaiting
+        expr: max by (service) (db_pool_connections{state="waiting"}) > 0
+        for: 30s
+        labels:
+          severity: warning
+          lab: pool-exhaustion
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value }} requests queued for a DB connection"
+          description: "Requests are waiting for a pooled Postgres connection. Something is holding connections too long (slow queries, row locks, pg_sleep chaos) or the pool is too small."
+          runbook: docs/labs/pool-exhaustion.md
+          related_labs: "slow-search, oversell-race"
+
+      - alert: DbPoolExhausted
+        expr: |
+          max by (service) (db_pool_connections{state="waiting"}) > 0
+          and
+          max by (service) (db_pool_connections{state="idle"}) == 0
+        for: 30s
+        labels:
+          severity: critical
+          lab: pool-exhaustion
+        annotations:
+          summary: "{{ $labels.service }}: DB pool exhausted (0 idle, requests waiting)"
+          description: "Every connection is checked out and callers are queuing. Expect acquire timeouts and 5xx next."
+          runbook: docs/labs/pool-exhaustion.md
+
+      - alert: DbAcquireTimeouts
+        expr: sum by (service) (rate(db_errors_total{code="acquire_timeout"}[1m])) > 0
+        for: 10s
+        labels:
+          severity: critical
+          lab: pool-exhaustion
+        annotations:
+          summary: "{{ $labels.service }}: requests failing because no DB connection became free"
+          description: "{{ $value | humanize }}/s requests gave up waiting for a pool connection (dbAcquireTimeoutMs)."
+          runbook: docs/labs/pool-exhaustion.md
+
+      - alert: PostgresConnectionsNearLimit
+        expr: |
+          sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 1m
+        labels:
+          severity: warning
+          lab: pool-exhaustion
+        annotations:
+          summary: "Postgres is using {{ $value | humanizePercentage }} of max_connections"
+          description: "Sum of every service's pool can exceed the server's max_connections; raising dbPoolSize everywhere is not a free fix."
+          runbook: docs/labs/pool-exhaustion.md
+
+      - alert: EventLoopLagHigh
+        expr: max by (service) (nodejs_eventloop_lag_p99_seconds) > 0.2
+        for: 30s
+        labels:
+          severity: warning
+          lab: logging-meltdown
+        annotations:
+          summary: "{{ $labels.service }}: event loop lag p99 {{ $value | humanizeDuration }}"
+          description: "The single JS thread is busy, so every request on this process waits. Usual suspects: synchronous logging, CPU burn, long GC pauses, JSON of huge payloads."
+          runbook: docs/labs/logging-meltdown.md
+          related_labs: "gc-pauses, overload-collapse"
+
+      - alert: EventLoopStalls
+        expr: max by (service) (max_over_time(nodejs_eventloop_lag_max_seconds[1m])) > 1
+        labels:
+          severity: warning
+          lab: gc-pauses
+        annotations:
+          summary: "{{ $labels.service }}: event loop stalled for {{ $value | humanizeDuration }}"
+          description: "A stop-the-world pause froze the process. Requests in flight during the stall all got slower by that amount, and a stall longer than the scrape timeout also shows up as up == 0."
+          runbook: docs/labs/gc-pauses.md
+
+      - alert: ServiceCpuSaturated
+        expr: sum by (service) (rate(process_cpu_seconds_total{job="breakcart"}[1m])) > 0.9
+        for: 1m
+        labels:
+          severity: warning
+          lab: overload-collapse
+        annotations:
+          summary: "{{ $labels.service }} is using {{ $value | humanizePercentage }} of a CPU core"
+          description: "Node runs JavaScript on one thread, so ~100% of one core is the ceiling. Latency rises sharply from here."
+          runbook: docs/labs/overload-collapse.md
+          related_labs: "logging-meltdown, connection-churn"
+
+      - alert: GatewayInflightHigh
+        expr: sum(http_server_inflight_requests{service="gateway"}) > 400
+        for: 30s
+        labels:
+          severity: warning
+          lab: overload-collapse
+        annotations:
+          summary: "Gateway has {{ $value }} requests in flight"
+          description: "Concurrency is piling up at the edge (default gatewayMaxInflight is 600). Without load shedding, queues grow until everything times out."
+          runbook: docs/labs/overload-collapse.md
+
+      - alert: GatewayShedding
+        expr: sum by (priority) (rate(gateway_shed_total{priority!="critical"}[1m])) > 0
+        for: 15s
+        labels:
+          severity: info
+          lab: overload-collapse
+        annotations:
+          summary: "Gateway is shedding {{ $labels.priority }}-priority requests ({{ $value | humanize }}/s)"
+          description: "Load shedding is protecting checkout by rejecting lower-priority work (search, browse) with 503 OVERLOADED. Working as designed, but you are at capacity."
+          runbook: docs/labs/overload-collapse.md
+
+      - alert: AdmissionCounterLeak
+        # The shedder's own count of in-flight requests vs what the HTTP server actually has in
+        # flight. A persistent gap means slots are not being returned (aborted requests).
+        expr: |
+          (sum(gateway_admission_inflight) - sum(http_server_inflight_requests{service="gateway"})) > 50
+        for: 30s
+        labels:
+          severity: critical
+          lab: shedding-death-spiral
+        annotations:
+          summary: "Gateway admission counter is {{ $value | humanize }} slots above real in-flight requests"
+          description: "The load shedder believes requests are in flight that no longer exist, so it sheds healthy traffic. Usually a release path that misses client disconnects. A restart clears it; fixing the release path prevents it."
+          runbook: docs/labs/shedding-death-spiral.md
+
+      - alert: CriticalTrafficShed
+        expr: sum(rate(gateway_shed_total{priority="critical"}[1m])) > 0
+        for: 15s
+        labels:
+          severity: warning
+          lab: overload-collapse
+        annotations:
+          summary: "Gateway is shedding checkout / pay / waiting-room requests ({{ $value | humanize }}/s)"
+          description: "Critical-priority traffic is only shed at 100% of gatewayMaxInflight. Everything cheaper has already been rejected; you are out of capacity, not just busy."
+          runbook: docs/labs/overload-collapse.md
+          related_labs: "thundering-herd"
+
+      - alert: CheckoutLatencyHigh
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{service="gateway", route="/api/checkout"}[1m]))) > 2
+        for: 30s
+        labels:
+          severity: warning
+          lab: thundering-herd
+        annotations:
+          summary: "Checkout p99 is {{ $value | humanizeDuration }}"
+          description: "Everyone is hitting checkout at once: row locks on hot SKUs serialise, the DB pool fills, and latency climbs. A waiting room meters admission."
+          runbook: docs/labs/thundering-herd.md
+          related_labs: "pool-exhaustion, oversell-race"
+
+  # ======================================================================= resilience
+  - name: breakcart.resilience.alerts
+    rules:
+      - alert: ServiceDown
+        expr: up{job="breakcart"} == 0
+        for: 10s
+        labels:
+          severity: critical
+          lab: cascading-failure
+        annotations:
+          summary: "{{ $labels.service }} is not answering /metrics"
+          description: "The process is dead, restarting, or its event loop is blocked longer than the 2s scrape timeout. Callers without timeouts and breakers will now pile up."
+          runbook: docs/labs/cascading-failure.md
+          related_labs: "memory-leak, logging-meltdown"
+
+      - alert: ServiceRestarted
+        expr: changes(process_start_time_seconds{job="breakcart"}[2m]) > 0
+        labels:
+          severity: warning
+          lab: memory-leak
+        annotations:
+          summary: "{{ $labels.service }} restarted in the last 2 minutes"
+          description: "process_start_time_seconds changed. If memory was climbing before this, it was an OOM kill."
+          runbook: docs/labs/memory-leak.md
+
+      - alert: ServiceErrorRateHigh
+        expr: |
+          service:http_errors:ratio_rate1m > 0.05
+          and
+          service:http_requests:rate1m > 0.5
+        for: 30s
+        labels:
+          severity: warning
+          lab: cascading-failure
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value | humanizePercentage }} of requests return 5xx"
+          description: "Follow the errors downstream: HTTP client outcomes per target show which dependency is failing."
+          runbook: docs/labs/cascading-failure.md
+
+      - alert: CircuitBreakerOpen
+        expr: max by (service, target) (circuit_breaker_state) == 2
+        for: 5s
+        labels:
+          severity: warning
+          lab: retry-storm
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }} circuit breaker is OPEN"
+          description: "Calls to {{ $labels.target }} fail fast instead of waiting for timeouts. Good for the caller; find out why the target is failing."
+          runbook: docs/labs/retry-storm.md
+          related_labs: "cascading-failure"
+
+      - alert: CircuitBreakerFlapping
+        expr: sum by (service, target) (increase(circuit_breaker_transitions_total{to="open"}[5m])) > 3
+        labels:
+          severity: info
+          lab: retry-storm
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }} breaker opened {{ $value | humanize }} times in 5m"
+          description: "Half-open probes keep failing. The dependency is unhealthy, not just slow for a moment."
+          runbook: docs/labs/retry-storm.md
+
+      - alert: RetryStorm
+        expr: |
+          service_target:http_client_retries:ratio_rate1m > 0.2
+          and
+          service_target:http_client_retries:rate1m > 1
+        for: 30s
+        labels:
+          severity: warning
+          lab: retry-storm
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }}: retries add {{ $value | humanizePercentage }} extra load"
+          description: "A struggling dependency is being hit harder because of retries. Immediate retries of everything (flag platform.retries=naive_immediate) multiply load."
+          runbook: docs/labs/retry-storm.md
+
+      - alert: RetryBudgetExhausted
+        expr: sum by (service, target) (increase(http_client_retry_budget_exhausted_total[1m])) > 0
+        labels:
+          severity: info
+          lab: retry-storm
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }}: retry budget exhausted"
+          description: "The retry budget is refusing extra retries so the dependency is not overloaded. This is the hardened behaviour doing its job."
+          runbook: docs/labs/retry-storm.md
+
+      - alert: UpstreamTimeouts
+        expr: |
+          sum by (service, target) (rate(http_client_request_duration_seconds_count{outcome="timeout"}[1m]))
+          /
+          sum by (service, target) (rate(http_client_request_duration_seconds_count[1m]))
+          > 0.05
+        for: 30s
+        labels:
+          severity: warning
+          lab: cascading-failure
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }}: {{ $value | humanizePercentage }} of calls time out"
+          description: "Timeouts hold sockets and request slots for the full timeout. With a 30s default timeout a slow non-critical dependency can take the caller down."
+          runbook: docs/labs/cascading-failure.md
+
+      - alert: DependencyFailing
+        expr: service_target:http_client_failures:ratio_rate30s > 0.1
+        for: 30s
+        labels:
+          severity: warning
+          lab: cascading-failure
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }}: {{ $value | humanizePercentage }} of calls fail"
+          description: "Failed outcomes include http_error, timeout, network_error and circuit_open."
+          runbook: docs/labs/cascading-failure.md
+
+      - alert: ConnectionChurn
+        expr: |
+          service_target:http_client_connections_per_call:ratio_rate1m > 0.5
+          and
+          service_target:http_client_connections_opened:rate1m > 5
+        for: 1m
+        labels:
+          severity: warning
+          lab: connection-churn
+        annotations:
+          summary: "{{ $labels.service }} -> {{ $labels.target }}: {{ printf \"%.2f\" $value }} new TCP connections per call"
+          description: "A warm keep-alive pool reuses sockets, so new connections should be rare. One handshake per call adds latency, burns CPU and leaves sockets in TIME_WAIT until ephemeral ports run out (flag platform.keepAlive)."
+          runbook: docs/labs/connection-churn.md
+
+      - alert: RateLimiterFailingClosed
+        expr: sum(rate(gateway_ratelimit_decisions_total{decision="error_rejected"}[1m])) > 0
+        labels:
+          severity: critical
+          lab: redis-blip
+        annotations:
+          summary: "Rate limiter cannot reach Redis and is rejecting traffic ({{ $value | humanize }}/s)"
+          description: "fail_closed turns a Redis blip into a full outage. Consider failing open behind load shedding (flag gateway.rateLimitFailMode)."
+          runbook: docs/labs/redis-blip.md
+
+      - alert: RateLimiterFailingOpen
+        expr: sum(rate(gateway_ratelimit_decisions_total{decision="error_allowed"}[1m])) > 0
+        labels:
+          severity: warning
+          lab: redis-blip
+        annotations:
+          summary: "Rate limiter cannot reach Redis and is allowing traffic unchecked"
+          description: "Customers are fine, but abuse protection is off until Redis recovers."
+          runbook: docs/labs/redis-blip.md
+
+      - alert: RateLimitingHeavy
+        expr: |
+          sum(rate(gateway_ratelimit_decisions_total{decision="limited"}[1m]))
+          /
+          sum(rate(gateway_ratelimit_decisions_total[1m]))
+          > 0.25
+        for: 1m
+        labels:
+          severity: info
+          lab: rate-limit-bursts
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests are rate limited"
+          description: "Either real abuse, or a limit that does not fit normal bursty traffic. A fixed window allows 2x bursts at window edges; a token bucket is smoother."
+          runbook: docs/labs/rate-limit-bursts.md
+
+      - alert: BotTrafficBlocked
+        expr: sum(rate(gateway_bot_blocked_total[1m])) > 1
+        for: 15s
+        labels:
+          severity: info
+          lab: bot-army
+        annotations:
+          summary: "Bot protection is blocking {{ $value | humanize }} requests/s"
+          description: "Scalpers are hammering hot SKUs. Check that real shoppers are not being blocked too (loadgen sessions result=blocked, persona=shopper)."
+          runbook: docs/labs/bot-army.md
+
+  # ======================================================================= data layer
+  - name: breakcart.data.alerts
+    rules:
+      - alert: AppDeadlocks
+        expr: sum by (service) (increase(db_errors_total{code="40P01"}[1m])) > 0
+        labels:
+          severity: warning
+          lab: deadlocks
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value | humanize }} deadlocks in the last minute"
+          description: "SQLSTATE 40P01. Two transactions lock the same rows in opposite order (flag inventory.lockOrdering)."
+          runbook: docs/labs/deadlocks.md
+
+      - alert: PostgresDeadlocks
+        expr: sum by (datname) (increase(pg_stat_database_deadlocks[1m])) > 0
+        labels:
+          severity: warning
+          lab: deadlocks
+        annotations:
+          summary: "Postgres detected {{ $value | humanize }} deadlocks in {{ $labels.datname }}"
+          description: "Server-side view of the same problem (postgres-exporter). Postgres aborts one victim transaction per deadlock."
+          runbook: docs/labs/deadlocks.md
+
+      - alert: SlowQueries
+        expr: |
+          histogram_quantile(0.99, sum by (service, op, le) (rate(db_query_duration_seconds_bucket[1m]))) > 0.5
+        for: 30s
+        labels:
+          severity: warning
+          lab: slow-search
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.op }} queries: p99 {{ $value | humanizeDuration }}"
+          description: "Slow queries hold pool connections, which starves every other request on that service. Look for sequential scans (ILIKE '%q%')."
+          runbook: docs/labs/slow-search.md
+          related_labs: "pool-exhaustion"
+
+      - alert: StatementTimeouts
+        expr: sum by (service) (rate(db_errors_total{code="57014"}[1m])) > 0
+        labels:
+          severity: warning
+          lab: slow-search
+        annotations:
+          summary: "{{ $labels.service }}: queries cancelled by statement_timeout"
+          description: "SQLSTATE 57014. Queries ran longer than dbStatementTimeoutMs."
+          runbook: docs/labs/slow-search.md
+
+      - alert: QueryAmplification
+        expr: |
+          service:db_queries_per_request:ratio_rate1m > 10
+          and
+          service:db_queries:rate1m > 5
+        for: 1m
+        labels:
+          severity: warning
+          lab: n-plus-one
+        annotations:
+          summary: "{{ $labels.service }} runs {{ $value | humanize }} SQL queries per HTTP request"
+          description: "One query for ids, then one per row: the N+1 pattern (flags catalog.listQuery, cart.pricing)."
+          runbook: docs/labs/n-plus-one.md
+
+      - alert: CacheStampede
+        expr: sum by (cache) (cache_rebuild_inflight) > 20
+        for: 10s
+        labels:
+          severity: warning
+          lab: cache-stampede
+        annotations:
+          summary: "{{ $value }} concurrent rebuilds of cache {{ $labels.cache }}"
+          description: "A hot key expired and every request is rebuilding it at once. Single-flight, jittered TTLs and stale-while-revalidate prevent this."
+          runbook: docs/labs/cache-stampede.md
+
+      - alert: CacheHitRatioLow
+        expr: |
+          cache:cache_requests:hit_ratio_rate30s < 0.8
+          and
+          sum by (cache) (rate(cache_requests_total[1m])) > 5
+        for: 1m
+        labels:
+          severity: info
+          lab: cache-stampede
+        annotations:
+          summary: "Cache {{ $labels.cache }} hit ratio is {{ $value | humanizePercentage }}"
+          description: "Misses go to Postgres. After a flush or synchronized expiry, watch rebuilds and DB pool waiting."
+          runbook: docs/labs/cache-stampede.md
+
+      - alert: RedisCommandErrors
+        expr: sum by (service) (rate(redis_command_duration_seconds_count{outcome!="ok"}[1m])) > 0
+        for: 10s
+        labels:
+          severity: warning
+          lab: redis-blip
+        annotations:
+          summary: "{{ $labels.service }}: Redis commands failing ({{ $value | humanize }}/s)"
+          description: "Sessions, carts, rate limits and the waiting room all live in Redis. Check how each feature degrades."
+          runbook: docs/labs/redis-blip.md
+
+      - alert: RedisSlow
+        expr: service:redis_command_seconds:p99_30s > 0.05
+        for: 30s
+        labels:
+          severity: warning
+          lab: redis-blip
+        annotations:
+          summary: "{{ $labels.service }}: Redis p99 {{ $value | humanizeDuration }}"
+          description: "Redis normally answers in well under a millisecond. Slow Redis stalls every request that touches a session, cart or rate limit."
+          runbook: docs/labs/redis-blip.md
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 5s
+        labels:
+          severity: critical
+          lab: redis-blip
+        annotations:
+          summary: "redis-exporter cannot reach Redis"
+          runbook: docs/labs/redis-blip.md
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 10s
+        labels:
+          severity: critical
+          lab: none
+        annotations:
+          summary: "postgres-exporter cannot reach Postgres"
+          runbook: "docs/observability.md#alert-catalogue"
+
+      - alert: ExporterDown
+        expr: up{job=~"postgres-exporter|redis-exporter"} == 0
+        for: 30s
+        labels:
+          severity: warning
+          lab: none
+        annotations:
+          summary: "{{ $labels.job }} is down; data-layer panels will be empty"
+          runbook: "docs/observability.md#alert-catalogue"
+
+      - alert: ReplicaLagHigh
+        expr: max(db_replica_lag_seconds) > 1
+        for: 15s
+        labels:
+          severity: warning
+          lab: replica-lag
+        annotations:
+          summary: "Order-history replica is {{ $value | humanizeDuration }} behind the primary"
+          description: "Replica reads miss the last {{ $value | humanizeDuration }} of writes. Lag itself is normal; the bug is sending a customer's read-after-write to the replica (they don't see the order they just paid for). Fix with read-your-writes routing (flag orders.readConsistency)."
+          runbook: docs/labs/replica-lag.md
+
+      - alert: ConsumerLagGrowing
+        expr: |
+          sum by (stream, group) (stream_consumer_lag) > 50
+          and
+          sum by (stream, group) (deriv(stream_consumer_lag[2m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          lab: poison-pill
+        annotations:
+          summary: "Consumer group {{ $labels.group }} on {{ $labels.stream }} is {{ $value }} messages behind and falling further"
+          description: "Fulfillment is not keeping up. A message that can never be processed (poison pill) blocks the head of the line when it is retried forever."
+          runbook: docs/labs/poison-pill.md
+
+      - alert: DeadLetterQueueNotEmpty
+        expr: max(stream_dlq_length) > 0
+        labels:
+          severity: warning
+          lab: poison-pill
+        annotations:
+          summary: "{{ $value }} messages parked in the dead-letter queue"
+          description: "The consumer gave up on these after repeated failures and moved on (good), but someone has to inspect and replay or discard them."
+          runbook: docs/labs/poison-pill.md
+
+      - alert: OutboxBacklogGrowing
+        expr: max(outbox_unpublished) > 100
+        for: 1m
+        labels:
+          severity: warning
+          lab: lost-events
+        annotations:
+          summary: "{{ $value }} outbox events waiting to be relayed"
+          description: "Events are safe in Postgres but fulfillment is delayed. Is the outbox relay (workers) running?"
+          runbook: docs/labs/lost-events.md
+
+      - alert: EventPublishFailures
+        expr: sum by (mode, result) (increase(orders_events_published_total{result!="ok"}[1m])) > 0
+        labels:
+          severity: warning
+          lab: lost-events
+        annotations:
+          summary: "{{ $value | humanize }} order events failed to publish (mode={{ $labels.mode }})"
+          description: "With dual_write the order is already committed, so a failed publish is a lost event. With outbox it will be retried."
+          runbook: docs/labs/lost-events.md
+
+  # ======================================================================= business
+  - name: breakcart.business.alerts
+    rules:
+      - alert: PaymentSuccessLow
+        expr: |
+          orders:payment_success:ratio_rate1m < 0.85
+          and
+          sum(rate(orders_payments_total{result!="replayed"}[1m])) > 0.2
+        for: 1m
+        labels:
+          severity: warning
+          lab: payment-limbo
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of payment attempts succeed"
+          description: "Break it down by result: declines are normal (~3%), timeouts, pending and rate_limited are not."
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: PaymentTimeouts
+        expr: sum(rate(orders_payments_total{result="timeout"}[1m])) > 0
+        for: 15s
+        labels:
+          severity: warning
+          lab: payment-limbo
+        annotations:
+          summary: "Payments timing out ({{ $value | humanize }}/s)"
+          description: "A timeout does not mean the PSP did not charge. Marking it failed creates orphan charges; mark it pending and reconcile."
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: PaymentsPendingPileUp
+        expr: max(business_orders{status="PAYMENT_PENDING"}) > 20
+        for: 2m
+        labels:
+          severity: warning
+          lab: payment-limbo
+        annotations:
+          summary: "{{ $value }} orders waiting in PAYMENT_PENDING"
+          description: "The reconciler is not resolving pending payments fast enough (or the PSP is down)."
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: PspErrorRateHigh
+        expr: |
+          psp:charge_errors:ratio_rate1m > 0.05
+          and
+          sum(rate(psp_charges_total[1m])) > 0.2
+        for: 30s
+        labels:
+          severity: warning
+          lab: payment-limbo
+        annotations:
+          summary: "PSP rejecting {{ $value | humanizePercentage }} of charges (rate_limited / outage)"
+          description: "Provider-side failures, not customer declines. Retrying immediately makes a PSP rate limit worse."
+          runbook: docs/labs/payment-limbo.md
+          related_labs: "retry-storm"
+
+      - alert: PspOutage
+        expr: |
+          sum(rate(psp_charges_total{result="outage"}[1m]))
+          /
+          sum(rate(psp_charges_total[1m]))
+          > 0.5
+        for: 15s
+        labels:
+          severity: critical
+          lab: payment-limbo
+        annotations:
+          summary: "PSP outage: {{ $value | humanizePercentage }} of charges fail with 503"
+          runbook: docs/labs/payment-limbo.md
+
+      - alert: HotSkuNegativeStock
+        expr: min by (sku) (inventory_available_units) < 0
+        labels:
+          severity: critical
+          lab: oversell-race
+        annotations:
+          summary: "SKU {{ $labels.sku }} has {{ $value }} units available"
+          description: "Negative stock: more reservations succeeded than units existed. The integrity checker will report oversold_units shortly."
+          runbook: docs/labs/oversell-race.md
+
+  # ======================================================================= process health
+  - name: breakcart.process.alerts
+    rules:
+      - alert: MemoryGrowing
+        expr: sum by (service) (deriv(process_resident_memory_bytes{job="breakcart"}[5m])) > 200 * 1024
+        for: 2m
+        labels:
+          severity: warning
+          lab: memory-leak
+        annotations:
+          summary: "{{ $labels.service }} RSS growing {{ $value | humanize1024 }}B/s"
+          description: "Sustained growth with no plateau ends in an OOM kill (the containers are memory limited). Compare heap used vs RSS to tell a JS heap leak from native/Buffer memory."
+          runbook: docs/labs/memory-leak.md
+
+      # Node services run with mem_limit 512m (loadgen 1536m) in docker-compose.yml.
+      - alert: MemoryNearContainerLimit
+        expr: |
+          max by (service) (process_resident_memory_bytes{job="breakcart", service!="loadgen"}) > 0.85 * 512 * 1024 * 1024
+          or
+          max by (service) (process_resident_memory_bytes{job="breakcart", service="loadgen"}) > 0.85 * 1536 * 1024 * 1024
+        for: 30s
+        labels:
+          severity: critical
+          lab: memory-leak
+        annotations:
+          summary: "{{ $labels.service }} RSS is {{ $value | humanize1024 }}B, above 85% of its container memory limit"
+          description: "The kernel OOM killer will terminate the container soon and Docker will restart it. Every in-flight request on it fails."
+          runbook: docs/labs/memory-leak.md
+
+      - alert: GcTimeHigh
+        expr: sum by (service) (rate(nodejs_gc_duration_seconds_sum[1m])) > 0.1
+        for: 30s
+        labels:
+          severity: warning
+          lab: gc-pauses
+        annotations:
+          summary: "{{ $labels.service }} spends {{ $value | humanizePercentage }} of its time in GC"
+          description: "Allocation pressure (or a growing heap) makes the garbage collector run often or long, pausing the event loop."
+          runbook: docs/labs/gc-pauses.md
+          related_labs: "memory-leak"
+
+      - alert: ClockSkew
+        expr: max by (service) (abs(clock_offset_seconds)) > 1
+        for: 15s
+        labels:
+          severity: warning
+          lab: clock-skew
+        annotations:
+          summary: "{{ $labels.service }} clock is off by {{ $value | humanizeDuration }}"
+          description: "This service disagrees with the others about what time it is. Time-based logic breaks quietly: waiting-room passes look expired, reservations expire early (or never), the sale opens at the wrong moment, TTLs and idempotency windows misbehave."
+          runbook: docs/labs/clock-skew.md
+
+      - alert: ChaosActive
+        expr: max by (service, kind) (chaos_active) > 0
+        labels:
+          severity: info
+          lab: none
+        annotations:
+          summary: "Chaos injection active: {{ $labels.kind }} on {{ $labels.service }}"
+          description: "Faults are being injected on purpose. Correlate symptoms with this before hunting for a code bug."
+          runbook: "docs/observability.md#chaos-and-annotations"
+
+  # ======================================================================= what customers see (loadgen)
+  - name: breakcart.customer.alerts
+    rules:
+      - alert: CustomersSeeMissingOrders
+        expr: sum(increase(loadgen_anomalies_total{kind="order_missing_after_pay"}[1m])) > 0
+        labels:
+          severity: warning
+          lab: replica-lag
+        annotations:
+          summary: "Shoppers paid but their order is missing from My Orders ({{ $value | humanize }} in 1m)"
+          description: "Reads go to a lagging replica right after a write. Users who do not see their order pay again."
+          runbook: docs/labs/replica-lag.md
+
+      - alert: CustomersSeeDuplicateCharges
+        expr: sum(increase(loadgen_anomalies_total{kind="duplicate_charge_seen"}[1m])) > 0
+        labels:
+          severity: critical
+          lab: double-charge
+        annotations:
+          summary: "Shoppers observed duplicate charges ({{ $value | humanize }} in 1m)"
+          runbook: docs/labs/double-charge.md
+
+      - alert: CustomersSeePriceChanges
+        expr: sum(increase(loadgen_anomalies_total{kind="price_changed_at_checkout"}[1m])) > 0
+        labels:
+          severity: info
+          lab: stale-price
+        annotations:
+          summary: "Shoppers hit a price change at checkout ({{ $value | humanize }} in 1m)"
+          description: "The cart showed one price and checkout another. Expected right after a price change when pricing is authoritative; frequent occurrences mean caches serve stale prices."
+          runbook: docs/labs/stale-price.md
+
+      - alert: ShoppersBlockedAsBots
+        expr: sum(rate(loadgen_sessions_total{persona="shopper", result="blocked"}[1m])) > 0
+        for: 30s
+        labels:
+          severity: warning
+          lab: bot-army
+        annotations:
+          summary: "Real shoppers are being blocked by bot protection"
+          description: "False positives cost real sales. Tune the bot rules before tightening them further."
+          runbook: docs/labs/bot-army.md
+
+      - alert: BotsWinningStock
+        expr: |
+          sum(rate(loadgen_sessions_total{persona="bot", result="converted"}[1m]))
+          /
+          sum(rate(loadgen_sessions_total{result="converted"}[1m]))
+          > 0.3
+        for: 1m
+        labels:
+          severity: warning
+          lab: bot-army
+        annotations:
+          summary: "Bots complete {{ $value | humanizePercentage }} of successful purchases"
+          description: "Scalpers that skip browsing and hammer add-to-cart are buying the hot stock (flag gateway.botProtection)."
+          runbook: docs/labs/bot-army.md
+
+      - alert: LoadgenDroppingArrivals
+        expr: sum(rate(loadgen_arrivals_dropped_total[1m])) > 0
+        for: 30s
+        labels:
+          severity: info
+          lab: none
+        annotations:
+          summary: "Load generator dropped {{ $value | humanize }} arrivals/s"
+          description: "The generator could not start sessions as fast as scheduled, so the offered load is lower than the scenario says. Results understate the real damage."
+          runbook: "docs/observability.md#open-vs-closed-load-and-coordinated-omission"

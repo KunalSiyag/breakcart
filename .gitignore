@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+/lab-verification.json
+/lab-verification.md
+.DS_Store
+coverage/
+*.tsbuildinfo

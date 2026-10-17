@@ -1,0 +1,1455 @@
+/* ------------------------------------------------------------------
+   Mission Control (/live) — loaded with its own chunk, on top of ops.css.
+   Reuses the console's custom properties; adds the map's edge colours.
+   ------------------------------------------------------------------ */
+
+.mc {
+  --edge-ok: #1fae1f;
+  --edge-warn: #fab219;
+  --edge-crit: #e24646;
+  --edge-idle: #3d3d3a;
+  --flow-ok: #c6f7c6;
+  --flow-warn: #ffe4a6;
+  --flow-crit: #ffc0c0;
+  --res-blocked: #9085e9;
+
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mc .panel {
+  margin-bottom: 0;
+}
+
+.mc .scenario-bar {
+  margin-bottom: 0;
+}
+
+/* Header actions (filter chips, toggles) may wrap instead of widening the column. */
+.mc .panel-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 1199px) {
+  .mc .scenario-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mc .sb-controls {
+    justify-content: flex-start;
+  }
+}
+
+/* ------------------------------------------------------------------ header */
+
+.mc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.mc-head h1 {
+  font-size: 21px;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.mc-head p {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.mc-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 12.5px;
+}
+
+.mc-head-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mc-head-links a {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mc-head-links a:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ right now */
+
+.mc-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.mc-now-title {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mc-now-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  list-style: none;
+}
+
+.mc-now-list li {
+  min-width: 0;
+}
+
+.mc-now-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 5px;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink) !important;
+  font-size: 12px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.mc-now-chip code {
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.mc-now-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+.mc-now-chip.is-bug {
+  border-color: rgba(250, 178, 25, 0.55);
+  background: var(--warning-soft);
+}
+
+.mc-now-chip.is-bug .mc-now-tag {
+  color: var(--warning);
+}
+
+a.mc-now-chip:hover {
+  border-color: var(--warning);
+}
+
+.mc-now-chip.is-flag .mc-now-tag {
+  color: var(--accent-ink);
+}
+
+.mc-now-chip.is-chaos {
+  border-color: rgba(236, 131, 90, 0.55);
+  background: var(--serious-soft);
+}
+
+.mc-now-chip.is-chaos .mc-now-tag {
+  color: var(--serious);
+}
+
+.mc-now-link {
+  margin-left: auto;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ KPI strip */
+
+.mc-kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+
+.mc-kpi-grid .kpi {
+  padding: 8px 10px 7px;
+}
+
+.mc-kpi-grid .kpi-value {
+  font-size: 20px;
+}
+
+/* Narrow tiles: a severity pill wraps under the label instead of drawing over it. */
+.mc-kpi-grid .kpi-top {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.mc-kpi-grid .kpi-label {
+  min-width: auto;
+}
+
+/* Placeholder tiles keep the sparkline's height (24px + 2px margin), so the strip doesn't grow on the first
+   sample. Matched by the empty value: data tiles at level none are .kpi-none too. */
+.mc-kpi-grid .kpi:has(> .kpi-value-empty)::after {
+  content: '';
+  display: block;
+  height: 26px;
+}
+
+/* ------------------------------------------------------------------ columns */
+
+.mc-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (min-width: 1200px) {
+  .mc-cols {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+}
+
+.mc-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  /* The map stays in view while the store column (frame + shopper feed) scrolls past. When it is
+     taller than the window, MissionControlPage lowers `top` so it pins once its bottom is in view
+     (no nested scrollbar hiding the bottom row). */
+  .mc-col-system {
+    position: sticky;
+    top: 64px;
+  }
+}
+
+.mc-bottom {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.mc-note {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.mc-note span {
+  color: var(--accent-ink);
+}
+
+/* ------------------------------------------------------------------ store preview */
+
+/* "Skip to the system map", before the frame: shown at the panel's top-left while focused. base.css's
+   top: -48px would leave it over the KPI strip here, so it is clipped instead. */
+.mc-store-panel {
+  position: relative;
+}
+
+.mc-store-panel .skip-link {
+  top: 10px;
+}
+
+.mc-store-panel .skip-link:not(:focus) {
+  clip-path: inset(50%);
+}
+
+.mc-store-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.mc-quicknav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mc-quicknav .chip-btn[aria-pressed='false'] {
+  opacity: 1;
+}
+
+.mc-quicknav .chip-btn:disabled {
+  opacity: 0.45;
+}
+
+.mc-address {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.mc-address-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #121211;
+  color: var(--ink-2) !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-newtab {
+  white-space: nowrap;
+}
+
+.mc-device {
+  display: flex;
+  justify-content: center;
+  height: 640px;
+}
+
+.mc-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #f5f5f7;
+}
+
+.mc-device-phone .mc-frame {
+  /* 390 CSS px of viewport inside a 10px bezel */
+  width: min(410px, 100%);
+  border: 10px solid #2a2a27;
+  border-radius: 30px;
+  box-shadow:
+    0 0 0 1px var(--border-strong),
+    0 18px 40px rgba(0, 0, 0, 0.5);
+}
+
+.mc-store-framed {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink-2);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ live shoppers */
+
+/* --ink-2, not --muted: the counts must stay ≥ 4.5:1 on the pressed chip and on the dimmed ones. */
+.mc-count {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-pause.is-on {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.mc-feed {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+}
+
+.mc-feed.is-paused .mc-jr summary {
+  border-style: dashed;
+}
+
+.mc-feed-wrap {
+  position: relative;
+}
+
+/* "N new" while the list holds still for the reader. It floats over the gap above the first row:
+   text in the header would re-wrap it at some widths and push the list down under the pointer. */
+.mc-feed-held {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  z-index: 1;
+  padding: 0 9px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.mc-feed-held span {
+  color: var(--accent-ink);
+}
+
+.mc-jr summary {
+  display: grid;
+  gap: 5px;
+  padding: 6px 9px 7px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--quiet);
+  border-radius: 7px;
+  background: var(--surface-2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.mc-jr summary::-webkit-details-marker {
+  display: none;
+}
+
+.mc-jr summary:hover {
+  background: var(--surface-3);
+}
+
+.mc-jr details[open] summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.mc-jr.res-converted summary {
+  border-left-color: var(--good);
+}
+
+.mc-jr.res-failed summary {
+  border-left-color: var(--critical);
+}
+
+.mc-jr.res-blocked summary {
+  border-left-color: var(--res-blocked);
+}
+
+.mc-jr.res-sold_out summary {
+  border-left-color: var(--warning);
+}
+
+.mc-jr-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mc-jr-persona {
+  flex: none;
+  width: 20px;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+}
+
+.mc-res {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.mc-res.res-converted {
+  border-color: rgba(12, 163, 12, 0.55);
+  background: var(--good-soft);
+  color: #63d963;
+}
+
+.mc-res.res-abandoned {
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+
+.mc-res.res-failed {
+  border-color: rgba(208, 59, 59, 0.65);
+  background: var(--critical-soft);
+  color: var(--critical-ink);
+}
+
+.mc-res.res-blocked {
+  border-color: rgba(144, 133, 233, 0.6);
+  background: rgba(144, 133, 233, 0.16);
+  color: #b3abf2;
+}
+
+.mc-res.res-sold_out {
+  border-color: rgba(250, 178, 25, 0.55);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.mc-jr-product {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-jr-meta {
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mc-jr-meta b {
+  color: var(--ink);
+}
+
+.mc-wf {
+  position: relative;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.mc-wf-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.6);
+}
+
+/* Not by hue alone: 2xx and waiting-room requests are half height, 4xx / 5xx full (bars, legend, request log). */
+.mc-wf-seg.tone-ok,
+.mc-wf-seg.tone-queue {
+  top: 2px;
+  bottom: 2px;
+}
+
+.tone-ok {
+  background: var(--good);
+}
+
+.tone-warn {
+  background: var(--warning);
+}
+
+.tone-bad {
+  background: var(--critical);
+}
+
+.tone-queue {
+  background: var(--accent);
+}
+
+.mc-wf-key {
+  display: inline-block;
+  width: 10px;
+  height: 8px;
+  border-radius: 2px;
+  vertical-align: baseline;
+}
+
+.mc-wf-key.tone-ok,
+.mc-wf-key.tone-queue {
+  height: 4px;
+  vertical-align: 2px;
+}
+
+.mc-jr-steps {
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 7px 7px;
+  background: #151514;
+}
+
+.mc-jr-steps .table-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.mc-jr-steps p {
+  margin-bottom: 6px;
+}
+
+.mc-wf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 10px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.mc-wf-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mc-feed-empty {
+  padding: 14px 4px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ system map */
+
+.mc-map-wrap {
+  position: relative;
+  container-type: inline-size;
+}
+
+.mc-map-measure {
+  position: relative;
+}
+
+.mc-map-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+  font-family: inherit;
+  user-select: none;
+}
+
+.mc-map-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 8px;
+  background: rgba(13, 13, 13, 0.62);
+  color: var(--ink-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.mc-map-overlay strong {
+  color: var(--critical-ink);
+}
+
+/* edges */
+.mc-edge {
+  transition: opacity 0.2s;
+}
+
+.mc-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14px;
+  pointer-events: stroke;
+}
+
+.mc-edge-line {
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
+  transition: stroke-width 0.5s;
+}
+
+.mc-edge-ok .mc-edge-line {
+  stroke: var(--edge-ok);
+  opacity: 0.85;
+}
+
+.mc-edge-warn .mc-edge-line {
+  stroke: var(--edge-warn);
+}
+
+.mc-edge-crit .mc-edge-line {
+  stroke: var(--edge-crit);
+}
+
+.mc-edge-idle .mc-edge-line {
+  stroke: var(--edge-idle);
+}
+
+.mc-edge-nodata .mc-edge-line {
+  stroke: var(--edge-idle);
+  stroke-dasharray: 2 5;
+}
+
+.mc-edge.is-broken .mc-edge-line {
+  stroke-dasharray: 8 5;
+  stroke-linecap: butt;
+}
+
+.mc-edge.is-dim {
+  opacity: 0.22;
+}
+
+.mc-edge.is-hot .mc-edge-line {
+  opacity: 1;
+}
+
+.mc-edge.is-hot.mc-edge-idle .mc-edge-line,
+.mc-edge.is-hot.mc-edge-nodata .mc-edge-line {
+  stroke: var(--quiet);
+}
+
+.mc-arrow-ok {
+  fill: var(--edge-ok);
+}
+
+.mc-arrow-warn {
+  fill: var(--edge-warn);
+}
+
+.mc-arrow-crit {
+  fill: var(--edge-crit);
+}
+
+.mc-arrow-idle,
+.mc-arrow-nodata {
+  fill: var(--edge-idle);
+}
+
+/* flow particles (SMIL; not rendered at all with prefers-reduced-motion). They never take the
+   pointer: a dot passing under a parked cursor would otherwise flicker the edge's hover label. */
+.mc-flows {
+  pointer-events: none;
+}
+
+.mc-particle {
+  fill: var(--flow-ok);
+}
+
+.mc-flow-warn .mc-particle {
+  fill: var(--flow-warn);
+}
+
+.mc-flow-crit .mc-particle {
+  fill: var(--flow-crit);
+}
+
+.mc-flows .is-dim {
+  opacity: 0.15;
+}
+
+/* nodes */
+.mc-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.2s;
+}
+
+.mc-node.is-dim {
+  opacity: 0.5;
+}
+
+.mc-node-focus {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 3px;
+}
+
+.mc-node:focus-visible .mc-node-focus {
+  stroke: var(--focus);
+}
+
+.mc-node-card {
+  fill: var(--surface-2);
+  stroke: var(--border-strong);
+  stroke-width: 1px;
+}
+
+.mc-node:hover .mc-node-card,
+.mc-node.is-hot .mc-node-card {
+  stroke: var(--ink-2);
+}
+
+.mc-kind-client .mc-node-card {
+  fill: #1b211b;
+}
+
+.mc-kind-store .mc-node-card {
+  fill: #1b1f26;
+}
+
+.mc-kind-queue .mc-node-card {
+  fill: #201d26;
+}
+
+.mc-kind-external .mc-node-card {
+  stroke: var(--quiet);
+  stroke-dasharray: 6 4;
+}
+
+.mc-node.has-alert .mc-node-card {
+  stroke: var(--critical);
+  stroke-width: 1.5px;
+}
+
+.mc-node.is-down .mc-node-card {
+  fill: #2b1717;
+  stroke: var(--critical);
+  stroke-width: 2.5px;
+}
+
+.mc-node.is-selected .mc-node-card {
+  stroke: var(--accent);
+  stroke-width: 2.5px;
+}
+
+.mc-status-up {
+  fill: var(--good);
+}
+
+.mc-status-down {
+  fill: var(--critical-ink);
+}
+
+.mc-status-unknown {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5px;
+}
+
+.mc-node-name {
+  fill: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mc-node-name.is-compact {
+  font-size: 25px;
+}
+
+.mc-node-badge {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mc-node-badge.is-external {
+  fill: #c3a6ff;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.mc-node-metric {
+  fill: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-node-metric.is-strong {
+  fill: var(--ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.mc-node-metric.is-compact {
+  font-size: 22px;
+  fill: var(--ink);
+}
+
+.mc-node-metric.lvl-warn,
+.mc-node-metric.lvl-serious {
+  fill: var(--warning);
+}
+
+.mc-node-metric.lvl-crit {
+  fill: var(--critical-ink);
+  font-weight: 700;
+}
+
+.mc-down-tag {
+  fill: var(--critical);
+}
+
+.mc-down-text {
+  fill: #fff;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.mc-pool-track {
+  fill: var(--surface-3);
+}
+
+.mc-pool-fill {
+  fill: var(--accent);
+  transition: width 0.5s;
+}
+
+.mc-pool-fill.is-warn {
+  fill: var(--warning);
+}
+
+.mc-pool-fill.is-crit {
+  fill: var(--critical);
+}
+
+/* edge labels + breaker tags */
+.mc-edge-label {
+  fill: var(--ink-2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.mc-edge-label.is-hot {
+  fill: var(--ink);
+  font-weight: 650;
+}
+
+.mc-edge-label.lvl-warn {
+  fill: var(--warning);
+}
+
+.mc-edge-label.lvl-crit {
+  fill: var(--critical-ink);
+  font-weight: 700;
+}
+
+.mc-edge-label .mc-breaker-text {
+  fill: var(--critical-ink);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+/* legend + needs attention */
+.mc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.mc-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mc-legend-line {
+  stroke-width: 3px;
+  stroke-linecap: round;
+}
+
+.mc-legend-line.mc-edge-ok {
+  stroke: var(--edge-ok);
+}
+
+.mc-legend-line.mc-edge-warn {
+  stroke: var(--edge-warn);
+}
+
+.mc-legend-line.mc-edge-crit {
+  stroke: var(--edge-crit);
+}
+
+.mc-legend-line.mc-edge-idle {
+  stroke: var(--quiet);
+}
+
+.mc-attention {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 10px;
+}
+
+.mc-attention h3 {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mc-attention ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  list-style: none;
+}
+
+.mc-attention li {
+  min-width: 0;
+}
+
+.mc-attention-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: 1px solid rgba(250, 178, 25, 0.5);
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.mc-attention-item:hover {
+  border-color: var(--warning);
+}
+
+.mc-attention-item > span {
+  color: var(--warning);
+}
+
+.mc-attention-item.lvl-crit {
+  border-color: rgba(208, 59, 59, 0.65);
+  background: var(--critical-soft);
+}
+
+.mc-attention-item.lvl-crit:hover {
+  border-color: var(--critical-ink);
+}
+
+.mc-attention-item.lvl-crit > span {
+  color: var(--critical-ink);
+}
+
+.mc-attention-more {
+  align-self: center;
+}
+
+.mc-attention-ok {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.mc-attention-ok span {
+  color: var(--good);
+}
+
+/* details side panel */
+.mc-details {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  width: min(320px, 46%);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+}
+
+.mc-details.is-left {
+  right: auto;
+  left: 0;
+}
+
+/* It takes focus only from clicks on its text (tabIndex -1, so Escape keeps working): no ring. */
+.mc-details:focus {
+  outline: none;
+}
+
+.mc-details-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 8px 14px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.mc-details-titles {
+  min-width: 0;
+}
+
+.mc-details-head h3 {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+}
+
+.mc-details-head h3:focus {
+  outline: none;
+}
+
+.mc-details-head h3:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.mc-details-role {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mc-details-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  padding: 10px 14px 14px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.mc-details-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mc-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 14px;
+}
+
+.mc-kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--grid);
+  font-size: 12.5px;
+}
+
+.mc-kv dt {
+  min-width: 0;
+  color: var(--muted);
+}
+
+.mc-kv dd {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mc-kv .lvl-warn dd,
+.mc-kv .lvl-serious dd {
+  color: var(--warning);
+}
+
+.mc-kv .lvl-crit dd {
+  color: var(--critical-ink);
+  font-weight: 700;
+}
+
+.mc-details-section h4 {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mc-details-table {
+  font-size: 12px;
+}
+
+.mc-details-table th,
+.mc-details-table td {
+  padding: 5px 4px;
+}
+
+.mc-details-table .lvl-warn,
+.mc-details-table .lvl-serious {
+  color: var(--warning);
+}
+
+.mc-details-table .lvl-crit {
+  color: var(--critical-ink);
+  font-weight: 700;
+}
+
+.mc-details-table .link-btn {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.mc-edge-state {
+  display: inline-block;
+  width: 10px;
+  color: var(--quiet);
+  font-size: 10px;
+  text-align: center;
+}
+
+.mc-edge-row.is-ok .mc-edge-state {
+  color: var(--good);
+}
+
+.mc-edge-row.is-warn .mc-edge-state {
+  color: var(--warning);
+}
+
+.mc-edge-row.is-crit .mc-edge-state {
+  color: var(--critical-ink);
+}
+
+.mc-details-table th[scope='row'] {
+  white-space: normal;
+}
+
+.mc-chaos-list {
+  display: grid;
+  gap: 3px;
+  color: var(--warning);
+  font-size: 12.5px;
+  list-style: none;
+}
+
+.mc-pool-row {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.mc-pool-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* narrow map: the details panel flows under the map instead of covering it */
+@container (max-width: 619px) {
+  .mc-details,
+  .mc-details.is-left {
+    position: static;
+    width: 100%;
+    margin-top: 10px;
+    box-shadow: none;
+  }
+}
+
+/* ------------------------------------------------------------------ funnel */
+
+.mc-funnel {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+}
+
+.mc-funnel-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 62px 46px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.mc-funnel-label {
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.mc-funnel-bar {
+  height: 14px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-3);
+}
+
+.mc-funnel-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.6s;
+}
+
+.mc-funnel-row.is-arrivals .mc-funnel-bar > span {
+  background: #6f6e69;
+}
+
+.mc-funnel-row.is-converted .mc-funnel-bar > span {
+  background: var(--good);
+}
+
+.mc-funnel-val {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mc-funnel-pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ hot deal stock */
+
+/* Rows share the list's columns (subgrid), so every bar track starts and ends at the same x and
+   fill lengths compare across rows. */
+.mc-stock {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(48px, 1fr) auto;
+  gap: 6px 8px;
+  list-style: none;
+}
+
+.mc-stock-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.mc-stock-name {
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-stock-bar {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.mc-stock-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.8s;
+}
+
+.mc-stock-row.is-low .mc-stock-bar > span {
+  background: var(--warning);
+}
+
+.mc-stock-row.is-out .mc-stock-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.mc-stock-val {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mc-stock-drain {
+  color: var(--serious);
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------------ small screens */
+
+@media (max-width: 900px) {
+  .mc-device {
+    height: 560px;
+  }
+
+  .mc-now-link {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .mc-head h1 {
+    font-size: 18px;
+  }
+
+  .mc-store-bar {
+    align-items: stretch;
+  }
+
+  .mc-address {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .mc-funnel-row {
+    grid-template-columns: 78px minmax(0, 1fr) 56px 40px;
+    gap: 6px;
+  }
+
+  .mc-jr-meta {
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  /* The product name gets the row; the timings wrap under it, right-aligned. */
+  .mc-jr-line {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .mc-jr-product {
+    flex: 1 1 auto;
+  }
+
+  .mc-kv {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* SystemMap's "Pause motion" (data-motion on <html>) also stops the blinking live indicators. */
+html[data-motion='still'] .pulse-dot,
+html[data-motion='still'] .live-dot,
+html[data-motion='still'] .inv.is-violated {
+  animation: none;
+}

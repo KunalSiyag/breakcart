@@ -1,0 +1,223 @@
+name: breakcart
+
+# One image, many entrypoints: every Node service is built from ./server and
+# started with a different `command`. Memory limits are deliberate — the
+# memory-leak lab ends in a real OOM kill + restart.
+
+x-node: &node
+  image: breakcart/server:local
+  init: true
+  restart: unless-stopped
+  mem_limit: 512m
+  # Cap log volume: the logging-meltdown lab writes pretty-printed bodies for every request.
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "3" }
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  environment: &node-env
+    NODE_ENV: production
+    NODE_OPTIONS: --max-old-space-size=384
+    LOG_LEVEL: info
+    DATABASE_URL: postgres://breakcart:breakcart@postgres:5432/breakcart
+    REDIS_URL: redis://redis:6379
+    PROMETHEUS_URL: http://prometheus:9090
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    OTEL_SAMPLE_RATIO: "0.05"
+    GATEWAY_URL: http://gateway:3000
+    CATALOG_URL: http://catalog:3001
+    INVENTORY_URL: http://inventory:3002
+    CART_URL: http://cart:3003
+    ORDERS_URL: http://orders:3004
+    PAYMENTS_URL: http://payments:3005
+    RECOMMENDATIONS_URL: http://recommendations:3006
+    CONTROL_PLANE_URL: http://control-plane:3010
+    LOADGEN_URL: http://loadgen:3011
+    WORKERS_URL: http://workers:3012
+
+services:
+  # ------------------------------------------------------------------ data
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: breakcart
+      POSTGRES_PASSWORD: breakcart
+      POSTGRES_DB: breakcart
+    command:
+      - postgres
+      - -c
+      - max_connections=400
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - deadlock_timeout=200ms
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - track_io_timing=on
+    ports: ["127.0.0.1:5440:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U breakcart -d breakcart"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    shm_size: 256m
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "768mb", "--maxmemory-policy", "noeviction"]
+    ports: ["127.0.0.1:6390:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # ------------------------------------------------------------------ services
+  gateway:
+    <<: *node
+    # Builds the shared breakcart/server image; every other Node service reuses it.
+    build: ./server
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/gateway/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: gateway, PORT: "3000" }
+    # One Node process is one core. The edge scales horizontally: clients resolve `gateway`
+    # to every replica (Docker DNS) and Prometheus discovers them the same way.
+    # Try: docker compose up -d --scale gateway=6 (or =1 on a small machine)
+    deploy:
+      replicas: 4
+    # No host port (replicas would collide): reach the API through the web edge at :8080/api.
+
+  catalog:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/catalog/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: catalog, PORT: "3001" }
+
+  inventory:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/inventory/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: inventory, PORT: "3002" }
+
+  cart:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/cart/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: cart, PORT: "3003" }
+
+  orders:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/orders/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: orders, PORT: "3004" }
+
+  payments:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/payments/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: payments, PORT: "3005" }
+
+  recommendations:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/recommendations/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: recommendations, PORT: "3006" }
+
+  workers:
+    <<: *node
+    command: ["node", "-r", "./dist/shared/tracing.js", "dist/services/workers/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: workers, PORT: "3012" }
+
+  control-plane:
+    <<: *node
+    command: ["node", "dist/services/control-plane/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: control-plane, PORT: "3010" }
+    ports: ["127.0.0.1:3010:3010"]
+
+  loadgen:
+    <<: *node
+    mem_limit: 1536m
+    command: ["node", "--max-old-space-size=1200", "dist/loadgen/main.js"]
+    environment: { <<: *node-env, SERVICE_NAME: loadgen, PORT: "3011", NODE_OPTIONS: "" }
+    ports: ["127.0.0.1:3011:3011"]
+
+  # ------------------------------------------------------------------ edge
+  web:
+    build: ./web
+    image: breakcart/web:local
+    restart: unless-stopped
+    depends_on: [gateway, control-plane]
+    ports: ["8080:8080"]
+
+  # ------------------------------------------------------------------ observability
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./infra/prometheus:/etc/prometheus:ro
+    ports: ["127.0.0.1:9091:9090"]
+
+  # `make infra` variant: scrapes Node services running on the host (`make dev`).
+  prometheus-dev:
+    image: prom/prometheus:v3.5.0
+    profiles: ["dev"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.dev.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./infra/prometheus:/etc/prometheus:ro
+    ports: ["127.0.0.1:9091:9090"]
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/war-room.json
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3300:3000"]
+    depends_on: [prometheus]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: "20000"
+    ports: ["127.0.0.1:16686:16686"]
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://breakcart:breakcart@postgres:5432/breakcart?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.74.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:

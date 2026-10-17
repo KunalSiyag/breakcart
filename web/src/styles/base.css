@@ -1,0 +1,369 @@
+/* ------------------------------------------------------------------
+   BreakCart base: reset, typography, shared primitives.
+   Area themes (.shop bright storefront, .ops dark console) only set
+   custom properties; everything here reads them.
+   ------------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Noto Sans',
+    'Helvetica Neue',
+    Arial,
+    sans-serif,
+    'Apple Color Emoji',
+    'Segoe UI Emoji';
+  font-size: 15px;
+  line-height: 1.5;
+  background: #f5f5f7;
+  color: #16161a;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-area='ops'] body {
+  background: #0d0d0d;
+  color: #f0efec;
+  color-scheme: dark;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ul,
+ol,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+}
+
+img,
+svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--link, #4a2fe0);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+code,
+pre,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.9em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus, #5b3df5);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--brand, #5b3df5);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s;
+}
+
+.skip-link:focus {
+  top: 10px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted, #6e6e7a);
+}
+
+.small {
+  font-size: 0.85em;
+}
+
+.center {
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.btn {
+  --_bg: var(--btn-bg, #fff);
+  --_fg: var(--btn-fg, var(--ink));
+  --_bd: var(--btn-border, var(--border));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--_bd);
+  border-radius: 10px;
+  background: var(--_bg);
+  color: var(--_fg);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    transform 0.05s,
+    opacity 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+}
+
+.btn-sm {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.btn-lg {
+  min-height: 48px;
+  padding: 0 22px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-primary {
+  --_bg: var(--brand);
+  --_fg: var(--brand-ink, #fff);
+  --_bd: var(--brand);
+}
+
+.btn-secondary {
+  --_bg: var(--surface);
+  --_fg: var(--ink);
+  --_bd: var(--border-strong, var(--border));
+}
+
+.btn-ghost {
+  --_bg: transparent;
+  --_fg: var(--ink-2, var(--ink));
+  --_bd: transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover, rgba(0, 0, 0, 0.05));
+}
+
+.btn-danger {
+  --_bg: var(--danger-bg, #c92a2a);
+  --_fg: #fff;
+  --_bd: var(--danger-bg, #c92a2a);
+}
+
+.btn-ok {
+  --_bg: var(--ok-bg, #087a08);
+  --_fg: #fff;
+  --_bd: var(--ok-bg, #087a08);
+}
+
+.btn-warn {
+  --_bg: var(--warn-bg, #fab219);
+  --_fg: #141414;
+  --_bd: var(--warn-bg, #fab219);
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ spinner */
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: 0.75;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -3px;
+  flex: none;
+}
+
+.spinner-sm {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+  vertical-align: -2px;
+}
+
+.spinner-inline {
+  width: 15px;
+  height: 15px;
+}
+
+.spinner-lg {
+  width: 40px;
+  height: 40px;
+  border-width: 3px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ boot + crash screens */
+
+.ops-boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 60vh;
+  color: #c3c2b7;
+  background: #0d0d0d;
+}
+
+.route-error {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 24px 16px;
+  background: #f5f5f7;
+  color: #16161a;
+  --surface: #fff;
+  --ink: #16161a;
+  --border: #e3e3e8;
+  --brand: #5b3df5;
+}
+
+.route-error-card {
+  width: min(560px, 100%);
+  padding: 28px;
+  border: 1px solid #e3e3e8;
+  border-radius: 16px;
+  background: #fff;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(20, 20, 40, 0.08);
+}
+
+.route-error-emoji {
+  font-size: 48px;
+}
+
+.route-error h1 {
+  margin: 8px 0;
+  font-size: 22px;
+}
+
+.route-error pre {
+  margin: 16px 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #f1f1f4;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.route-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

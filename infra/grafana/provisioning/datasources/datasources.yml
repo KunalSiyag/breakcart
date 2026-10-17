@@ -1,0 +1,48 @@
+# BreakCart — Grafana datasources (mounted at /etc/grafana/provisioning/datasources)
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      # Must match the scrape interval so $__rate_interval never drops below 4 samples.
+      timeInterval: 2s
+      httpMethod: POST
+      prometheusType: Prometheus
+      prometheusVersion: 3.5.0
+      # Lists the Prometheus alert rules (read-only) under Alerting > Alert rules.
+      manageAlerts: true
+      # If services attach trace_id exemplars to histograms, Grafana links them to Jaeger.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true
+    jsonData:
+      nodeGraph:
+        enabled: true
+      # From a span, jump to the RED metrics of the service that emitted it.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: Request rate
+            query: sum(rate(http_server_request_duration_seconds_count{$__tags}[30s]))
+          - name: 5xx ratio
+            query: sum(rate(http_server_request_duration_seconds_count{$__tags, status=~"5.."}[30s])) / sum(rate(http_server_request_duration_seconds_count{$__tags}[30s]))
+          - name: p99 latency
+            query: histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{$__tags}[30s])))

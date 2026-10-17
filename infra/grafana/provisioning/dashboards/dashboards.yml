@@ -1,0 +1,17 @@
+# BreakCart — dashboard provider (mounted at /etc/grafana/provisioning/dashboards)
+# Dashboards live in infra/grafana/dashboards and must be mounted at /var/lib/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: breakcart
+    orgId: 1
+    type: file
+    folder: BreakCart
+    folderUid: breakcart
+    disableDeletion: false
+    # UI edits are allowed for experimenting, but the JSON files win on the next restart.
+    allowUiUpdates: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,64 @@
+# BreakCart — Prometheus configuration for `make dev` (services run on the host).
+# Same as prometheus.yml, except the Node services are scraped via host.docker.internal.
+# Started by `make infra` (compose profile "dev").
+#
+# Lab runs last minutes, not days, so we scrape aggressively (2s) and evaluate
+# rules every 5s. Every BreakCart Node service already attaches a `service` label
+# to each series it exports; `honor_labels: true` keeps it (and anything else the
+# service sets) instead of letting Prometheus overwrite it. The static `service`
+# target label below is only a fallback that also lands on the synthetic `up` /
+# `scrape_*` series, which are not produced by the service itself.
+#
+# Metric names and labels: docs/contract.md §5. How to read them: docs/observability.md.
+
+global:
+  scrape_interval: 2s
+  scrape_timeout: 2s
+  evaluation_interval: 5s
+
+rule_files:
+  - rules/*.yml
+
+scrape_configs:
+  # ------------------------------------------------------------------ Node services
+  - job_name: breakcart
+    honor_labels: true
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:3000"]
+        labels: { service: gateway }
+      - targets: ["host.docker.internal:3001"]
+        labels: { service: catalog }
+      - targets: ["host.docker.internal:3002"]
+        labels: { service: inventory }
+      - targets: ["host.docker.internal:3003"]
+        labels: { service: cart }
+      - targets: ["host.docker.internal:3004"]
+        labels: { service: orders }
+      - targets: ["host.docker.internal:3005"]
+        labels: { service: payments }
+      - targets: ["host.docker.internal:3006"]
+        labels: { service: recommendations }
+      - targets: ["host.docker.internal:3010"]
+        labels: { service: control-plane }
+      - targets: ["host.docker.internal:3011"]
+        labels: { service: loadgen }
+      - targets: ["host.docker.internal:3012"]
+        labels: { service: workers }
+
+  # ------------------------------------------------------------------ data stores
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels: { service: postgres }
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels: { service: redis }
+
+  # ------------------------------------------------------------------ self
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels: { service: prometheus }

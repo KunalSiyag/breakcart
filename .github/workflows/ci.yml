@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Lab docs are regenerated
+        run: npm run gen:docs && git diff --exit-code -- ../docs/labs
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prometheus config and rules
+        run: |
+          for f in prometheus.yml prometheus.dev.yml; do
+            docker run --rm -v "$PWD/infra/prometheus:/etc/prometheus:ro" --entrypoint promtool prom/prometheus:v3.5.0 check config /etc/prometheus/$f
+          done
+      - name: Grafana dashboards are valid JSON
+        run: for f in infra/grafana/dashboards/*.json; do python3 -m json.tool "$f" > /dev/null || exit 1; done
+      - name: Compose file
+        run: docker compose config --quiet
+
+  smoke:
+    needs: [server, web, infra]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Start the stack
+        run: docker compose up -d --build
+      - name: Wait for every service
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf localhost:3010/control/services | python3 -c 'import sys,json; s=json.load(sys.stdin)["items"]; sys.exit(0 if len(s) >= 10 and all(x["up"] for x in s) else 1)'; then exit 0; fi
+            sleep 2
+          done
+          docker compose ps; docker compose logs --tail=50; exit 1
+      - name: Storefront and API through the web edge
+        run: |
+          curl -sf localhost:8080/ > /dev/null
+          TOKEN=$(curl -sf -XPOST localhost:8080/api/auth/guest | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+          curl -sf localhost:8080/api/home -H "authorization: Bearer $TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d["deals"]) == 12, d'
+      - name: Verify one lab end to end (broken → oversell, fixed → none)
+        working-directory: server
+        run: |
+          npm ci
+          npx tsx src/scripts/verify-labs.ts oversell-race --duration=90 --multiplier=0.6
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=200

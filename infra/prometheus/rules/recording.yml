@@ -1,0 +1,376 @@
+# BreakCart — recording rules
+#
+# Naming follows the Prometheus convention  level:metric:operations
+#   level      = the labels the result is aggregated BY (service, service_route, cache, ...)
+#   metric     = what is measured
+#   operations = what was done to it (rate30s, ratio_rate1m, p99_30s, ...)
+#
+# Windows are deliberately short (30s / 1m, plus 5m / 30m for SLO burn rates)
+# because a lab run lasts a few minutes. With a 2s scrape interval a 30s window
+# still holds ~15 samples per series, which is plenty for rate().
+#
+# Probe / scrape endpoints (/metrics, /health, /ready) are excluded from HTTP SLIs
+# so that Prometheus scraping a service every 2s does not count as "traffic".
+#
+# Rules inside one group are evaluated in order at the same timestamp, so a rule
+# may use a series recorded earlier in the SAME group (e.g. the ratio rules below).
+# Do not reorder them across groups.
+
+groups:
+  # ======================================================================= HTTP — RED
+  - name: breakcart.http.rules
+    interval: 5s
+    rules:
+      # --- per service ---------------------------------------------------------
+      - record: service:http_requests:rate30s
+        expr: sum by (service) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready"}[30s]))
+
+      - record: service:http_requests:rate1m
+        expr: sum by (service) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready"}[1m]))
+
+      # 5xx only. `or 0 * ...` turns "no 5xx series exist yet" into an explicit 0.
+      - record: service:http_errors:rate30s
+        expr: |
+          sum by (service) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready", status=~"5.."}[30s]))
+          or
+          0 * service:http_requests:rate30s
+
+      - record: service:http_errors:rate1m
+        expr: |
+          sum by (service) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready", status=~"5.."}[1m]))
+          or
+          0 * service:http_requests:rate1m
+
+      - record: service:http_errors:ratio_rate30s
+        expr: service:http_errors:rate30s / service:http_requests:rate30s
+
+      - record: service:http_errors:ratio_rate1m
+        expr: service:http_errors:rate1m / service:http_requests:rate1m
+
+      - record: service:http_latency_seconds:p50_30s
+        expr: histogram_quantile(0.50, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{route!~"/metrics|/health|/ready"}[30s])))
+
+      - record: service:http_latency_seconds:p95_30s
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{route!~"/metrics|/health|/ready"}[30s])))
+
+      - record: service:http_latency_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{route!~"/metrics|/health|/ready"}[30s])))
+
+      - record: service:http_inflight_requests:sum
+        expr: sum by (service) (http_server_inflight_requests)
+
+      # --- per service + route -------------------------------------------------
+      - record: service_route:http_requests:rate30s
+        expr: sum by (service, route) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready"}[30s]))
+
+      - record: service_route:http_errors:ratio_rate30s
+        expr: |
+          (
+            sum by (service, route) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready", status=~"5.."}[30s]))
+            or
+            0 * service_route:http_requests:rate30s
+          )
+          / service_route:http_requests:rate30s
+
+      - record: service_route:http_latency_seconds:p95_30s
+        expr: histogram_quantile(0.95, sum by (service, route, le) (rate(http_server_request_duration_seconds_bucket{route!~"/metrics|/health|/ready"}[30s])))
+
+      - record: service_route:http_latency_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, route, le) (rate(http_server_request_duration_seconds_bucket{route!~"/metrics|/health|/ready"}[30s])))
+
+      # --- per service + status code -------------------------------------------
+      - record: service_status:http_requests:rate30s
+        expr: sum by (service, status) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready"}[30s]))
+
+      # --- per service + error code (OUT_OF_STOCK, QUEUE_REQUIRED, OVERLOADED, INTERNAL, ...) --
+      - record: service_code:http_server_errors:rate30s
+        expr: sum by (service, code) (rate(http_server_errors_total[30s]))
+
+      # --- gateway edge (customer-facing /api/* routes only) --------------------
+      - record: gateway:api_requests:rate30s
+        expr: sum by (service) (rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[30s]))
+
+      - record: gateway:api_errors:ratio_rate30s
+        expr: |
+          (
+            sum by (service) (rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*", status=~"5.."}[30s]))
+            or
+            0 * gateway:api_requests:rate30s
+          )
+          / gateway:api_requests:rate30s
+
+      - record: gateway:api_latency_seconds:p50_30s
+        expr: histogram_quantile(0.50, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*"}[30s])))
+
+      - record: gateway:api_latency_seconds:p95_30s
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*"}[30s])))
+
+      - record: gateway:api_latency_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*"}[30s])))
+
+  # ======================================================================= Node runtime — saturation
+  - name: breakcart.runtime.rules
+    interval: 5s
+    rules:
+      # 1.0 == one full CPU core. Node runs JS on one thread, so ~1.0 means saturated.
+      - record: service:process_cpu_seconds:rate30s
+        expr: sum by (service) (rate(process_cpu_seconds_total{job="breakcart"}[30s]))
+
+      - record: service:nodejs_eventloop_lag_p99_seconds:max
+        expr: max by (service) (nodejs_eventloop_lag_p99_seconds)
+
+      # Fraction of wall-clock time spent in GC (0.1 == 10%).
+      - record: service:nodejs_gc_seconds:rate30s
+        expr: sum by (service) (rate(nodejs_gc_duration_seconds_sum[30s]))
+
+      # Bytes per second of RSS growth. A healthy service hovers around 0.
+      - record: service:process_resident_memory_bytes:deriv5m
+        expr: sum by (service) (deriv(process_resident_memory_bytes{job="breakcart"}[5m]))
+
+  # ======================================================================= service-to-service calls
+  - name: breakcart.dependencies.rules
+    interval: 5s
+    rules:
+      - record: service_target:http_client_requests:rate30s
+        expr: sum by (service, target) (rate(http_client_request_duration_seconds_count[30s]))
+
+      - record: service_target_outcome:http_client_requests:rate30s
+        expr: sum by (service, target, outcome) (rate(http_client_request_duration_seconds_count[30s]))
+
+      # Anything that is not outcome="ok": http_error, timeout, network_error, circuit_open.
+      - record: service_target:http_client_failures:ratio_rate30s
+        expr: |
+          (
+            sum by (service, target) (rate(http_client_request_duration_seconds_count{outcome!="ok"}[30s]))
+            or
+            0 * service_target:http_client_requests:rate30s
+          )
+          / service_target:http_client_requests:rate30s
+
+      - record: service_target:http_client_latency_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, target, le) (rate(http_client_request_duration_seconds_bucket[30s])))
+
+      - record: service_target:http_client_retries:rate1m
+        expr: sum by (service, target) (rate(http_client_retries_total[1m]))
+
+      # Retry amplification: extra calls generated by retries per call made.
+      - record: service_target:http_client_retries:ratio_rate1m
+        expr: |
+          service_target:http_client_retries:rate1m
+          / sum by (service, target) (rate(http_client_request_duration_seconds_count[1m]))
+
+      # Connection churn: new TCP connections per second, and per call made.
+      # With keep-alive a warm pool stays near 0 per call; without it, ~1 (more with retries).
+      - record: service_target:http_client_connections_opened:rate1m
+        expr: sum by (service, target) (rate(http_client_connections_opened_total[1m]))
+
+      - record: service_target:http_client_connections_per_call:ratio_rate1m
+        expr: |
+          service_target:http_client_connections_opened:rate1m
+          / sum by (service, target) (rate(http_client_request_duration_seconds_count[1m]))
+
+  # ======================================================================= data layer
+  - name: breakcart.data.rules
+    interval: 5s
+    rules:
+      - record: service:db_pool_waiting:max
+        expr: max by (service) (db_pool_connections{state="waiting"})
+
+      # Connections checked out right now (total open - idle).
+      - record: service:db_pool_busy:sum
+        expr: |
+          sum by (service) (db_pool_connections{state="total"})
+          - sum by (service) (db_pool_connections{state="idle"})
+
+      # USE utilization of the pool: checked-out connections / configured size (dbPoolSize).
+      - record: service:db_pool_utilization:ratio
+        expr: |
+          service:db_pool_busy:sum
+          / max by (service) (db_pool_connections{state="max"})
+
+      - record: service:db_pool_acquire_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, le) (rate(db_pool_acquire_duration_seconds_bucket[30s])))
+
+      - record: service_op:db_query_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, op, le) (rate(db_query_duration_seconds_bucket[30s])))
+
+      - record: service:db_queries:rate1m
+        expr: sum by (service) (rate(db_query_duration_seconds_count[1m]))
+
+      # N+1 detector: SQL queries issued per HTTP request served.
+      - record: service:db_queries_per_request:ratio_rate1m
+        expr: |
+          service:db_queries:rate1m
+          / sum by (service) (rate(http_server_request_duration_seconds_count{route!~"/metrics|/health|/ready"}[1m]))
+
+      # code = Postgres SQLSTATE (40P01 deadlock, 57014 statement timeout, ...) or acquire_timeout.
+      - record: service_code:db_errors:rate1m
+        expr: sum by (service, code) (rate(db_errors_total[1m]))
+
+      - record: service:redis_command_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (service, le) (rate(redis_command_duration_seconds_bucket[30s])))
+
+      - record: service:redis_command_errors:rate30s
+        expr: sum by (service) (rate(redis_command_duration_seconds_count{outcome!="ok"}[30s]))
+
+      # Served without a rebuild (hit, l1_hit, stale) / all lookups that consulted the cache.
+      - record: cache:cache_requests:hit_ratio_rate30s
+        expr: |
+          (
+            sum by (cache) (rate(cache_requests_total{result=~"hit|l1_hit|stale"}[30s]))
+            or
+            0 * sum by (cache) (rate(cache_requests_total[30s]))
+          )
+          / sum by (cache) (rate(cache_requests_total{result!="bypass"}[30s]))
+
+      - record: cache:cache_rebuilds:rate30s
+        expr: sum by (cache) (rate(cache_rebuilds_total[30s]))
+
+      - record: cache:cache_rebuild_inflight:sum
+        expr: sum by (cache) (cache_rebuild_inflight)
+
+      - record: stream_group:stream_consumer_lag:sum
+        expr: sum by (stream, group) (stream_consumer_lag)
+
+  # ======================================================================= business
+  - name: breakcart.business.rules
+    interval: 5s
+    rules:
+      - record: result:orders_checkouts:rate1m
+        expr: sum by (result) (rate(orders_checkouts_total[1m]))
+
+      # Success = an order was created. Idempotent replays (duplicate_replayed) and
+      # concurrent duplicates (in_progress) are not new checkout attempts.
+      - record: orders:checkout_success:ratio_rate1m
+        expr: |
+          (sum(rate(orders_checkouts_total{result="created"}[1m])) or vector(0))
+          / sum(rate(orders_checkouts_total{result!~"duplicate_replayed|in_progress"}[1m]))
+
+      - record: result:orders_payments:rate1m
+        expr: sum by (result) (rate(orders_payments_total[1m]))
+
+      # Idempotent replays are not new payment attempts, so they are excluded.
+      - record: orders:payment_success:ratio_rate1m
+        expr: |
+          (sum(rate(orders_payments_total{result="paid"}[1m])) or vector(0))
+          / sum(rate(orders_payments_total{result!="replayed"}[1m]))
+
+      - record: orders:gmv_cents:rate1m
+        expr: sum(rate(orders_gmv_cents_total[1m]))
+
+      - record: psp:charged_cents:rate1m
+        expr: sum(rate(psp_charged_cents_total[1m]))
+
+      - record: result:psp_charges:rate1m
+        expr: sum by (result) (rate(psp_charges_total[1m]))
+
+      # PSP-side failures (not customer declines).
+      - record: psp:charge_errors:ratio_rate1m
+        expr: |
+          (sum(rate(psp_charges_total{result=~"rate_limited|outage"}[1m])) or vector(0))
+          / sum(rate(psp_charges_total[1m]))
+
+      - record: strategy_result:inventory_reservations:rate30s
+        expr: sum by (strategy, result) (rate(inventory_reservations_total[30s]))
+
+      - record: strategy:inventory_reservation_seconds:p99_30s
+        expr: histogram_quantile(0.99, sum by (strategy, le) (rate(inventory_reservation_duration_seconds_bucket[30s])))
+
+      - record: decision:gateway_ratelimit_decisions:rate30s
+        expr: sum by (decision) (rate(gateway_ratelimit_decisions_total[30s]))
+
+      - record: priority:gateway_shed:rate30s
+        expr: sum by (priority) (rate(gateway_shed_total[30s]))
+
+  # ======================================================================= SLOs
+  #
+  # Two SLOs, each expressed as an error ratio (bad events / all events):
+  #
+  #   checkout-availability  99.5% of checkout + pay requests at the gateway are not 5xx
+  #                          (POST /api/checkout, POST /api/orders/:id/pay)
+  #   gateway-latency        99% of customer API requests (/api/*) complete in <= 1s
+  #
+  # error budget = 1 - objective. burn rate = error ratio / error budget.
+  # A burn rate of 1 spends exactly the budget over the SLO period; 14.4 spends a
+  # 30-day budget in ~2 days. Alerts live in alerts.yml.
+  #
+  # Prometheus 3 stores classic-histogram bucket bounds as floats (le="1.0") while
+  # v2 scraped text format kept le="1"; the matcher le=~"1|1.0" works on both.
+  - name: breakcart.slo.rules
+    interval: 5s
+    rules:
+      # --- objectives -------------------------------------------------------------
+      - record: slo:objective:ratio
+        labels: { slo: checkout-availability }
+        expr: vector(0.995)
+      - record: slo:error_budget:ratio
+        labels: { slo: checkout-availability }
+        expr: vector(0.005)
+      - record: slo:objective:ratio
+        labels: { slo: gateway-latency }
+        expr: vector(0.99)
+      - record: slo:error_budget:ratio
+        labels: { slo: gateway-latency }
+        expr: vector(0.01)
+
+      # --- checkout availability -------------------------------------------------------
+      - record: slo:sli_total:rate1m
+        labels: { slo: checkout-availability }
+        expr: sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay"}[1m]))
+      - record: slo:sli_total:rate5m
+        labels: { slo: checkout-availability }
+        expr: sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay"}[5m]))
+
+      - record: slo:sli_error:ratio_rate1m
+        labels: { slo: checkout-availability }
+        expr: |
+          (sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay", status=~"5.."}[1m])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay"}[1m]))
+      - record: slo:sli_error:ratio_rate5m
+        labels: { slo: checkout-availability }
+        expr: |
+          (sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay", status=~"5.."}[5m])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay"}[5m]))
+      - record: slo:sli_error:ratio_rate30m
+        labels: { slo: checkout-availability }
+        expr: |
+          (sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay", status=~"5.."}[30m])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/checkout|/api/orders/[^/]+/pay"}[30m]))
+
+      # --- gateway latency (bad = slower than 1s) ------------------------------------------
+      - record: slo:sli_total:rate1m
+        labels: { slo: gateway-latency }
+        expr: sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[1m]))
+      - record: slo:sli_total:rate5m
+        labels: { slo: gateway-latency }
+        expr: sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[5m]))
+
+      - record: slo:sli_error:ratio_rate1m
+        labels: { slo: gateway-latency }
+        expr: |
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*", le=~"1|1.0"}[1m]))
+            / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[1m]))
+          )
+      - record: slo:sli_error:ratio_rate5m
+        labels: { slo: gateway-latency }
+        expr: |
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*", le=~"1|1.0"}[5m]))
+            / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[5m]))
+          )
+      - record: slo:sli_error:ratio_rate30m
+        labels: { slo: gateway-latency }
+        expr: |
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service="gateway", route=~"/api/.*", le=~"1|1.0"}[30m]))
+            / sum(rate(http_server_request_duration_seconds_count{service="gateway", route=~"/api/.*"}[30m]))
+          )
+
+      # --- burn rates (for dashboards) -----------------------------------------------------
+      - record: slo:burn_rate:rate1m
+        expr: slo:sli_error:ratio_rate1m / on (slo) slo:error_budget:ratio
+      - record: slo:burn_rate:rate5m
+        expr: slo:sli_error:ratio_rate5m / on (slo) slo:error_budget:ratio
+      - record: slo:burn_rate:rate30m
+        expr: slo:sli_error:ratio_rate30m / on (slo) slo:error_budget:ratio

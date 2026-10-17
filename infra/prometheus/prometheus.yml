@@ -1,0 +1,72 @@
+# BreakCart — Prometheus configuration
+#
+# Lab runs last minutes, not days, so we scrape aggressively (2s) and evaluate
+# rules every 5s. Every BreakCart Node service already attaches a `service` label
+# to each series it exports; `honor_labels: true` keeps it (and anything else the
+# service sets) instead of letting Prometheus overwrite it. The static `service`
+# target label below is only a fallback that also lands on the synthetic `up` /
+# `scrape_*` series, which are not produced by the service itself.
+#
+# Metric names and labels: docs/contract.md §5. How to read them: docs/observability.md.
+
+global:
+  scrape_interval: 2s
+  scrape_timeout: 2s
+  evaluation_interval: 5s
+
+rule_files:
+  - rules/*.yml
+
+scrape_configs:
+  # ------------------------------------------------------------------ Node services
+  - job_name: breakcart
+    honor_labels: true
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["catalog:3001"]
+        labels: { service: catalog }
+      - targets: ["inventory:3002"]
+        labels: { service: inventory }
+      - targets: ["cart:3003"]
+        labels: { service: cart }
+      - targets: ["orders:3004"]
+        labels: { service: orders }
+      - targets: ["payments:3005"]
+        labels: { service: payments }
+      - targets: ["recommendations:3006"]
+        labels: { service: recommendations }
+      - targets: ["control-plane:3010"]
+        labels: { service: control-plane }
+      - targets: ["loadgen:3011"]
+        labels: { service: loadgen }
+      - targets: ["workers:3012"]
+        labels: { service: workers }
+    # The gateway runs as several replicas; Docker's DNS returns one A record per replica,
+    # so DNS service discovery finds them all (and new ones after `--scale gateway=N`).
+    dns_sd_configs:
+      - names: ["gateway"]
+        type: A
+        port: 3000
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        regex: gateway
+        target_label: service
+        replacement: gateway
+
+  # ------------------------------------------------------------------ data stores
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels: { service: postgres }
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels: { service: redis }
+
+  # ------------------------------------------------------------------ self
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels: { service: prometheus }
