@@ -2,6 +2,8 @@
 
 **An e-commerce platform built to break on sale day — and a lab for learning how production systems fail.**
 
+![The oversell-race lab, broken then fixed on the same traffic: the error rate reads 0% both times, but only the broken run oversells](docs/media/breakcart-demo.gif)
+
 BreakCart is a small but realistic microservice storefront (gateway, catalog, inventory, cart, orders, a mock
 payment provider, recommendations, async workers) running on Postgres and Redis, with Prometheus, Grafana and
 Jaeger. On top sits a **control plane** that can, at runtime and without restarts:
@@ -23,9 +25,7 @@ including 5 game days, a React storefront that lets you *feel* the latency, a li
 
 ## Demo
 
-![The oversell-race lab, broken then fixed on the same traffic: the error rate reads 0% both times, but only the broken run oversells](docs/media/breakcart-demo.gif)
-
-The oversell-race lab, run broken and then fixed on the same traffic (sped up): the error rate reads 0% both times,
+The GIF at the top is the oversell-race lab, run broken and then fixed on the same traffic (sped up): the error rate reads 0% both times,
 and only the business-invariant auditor tells them apart. Full 50-second video:
 [`docs/media/breakcart-demo.mp4`](docs/media/breakcart-demo.mp4).
 
@@ -287,3 +287,7 @@ docs/                   architecture, contract, observability, game days, labs (
   absolute capacity — a laptop's limits arrive at a few hundred sessions per second.
 - Replica lag and the payment provider are simulations; everything else fails for real.
 - The control plane and Grafana have no authentication. Bind to localhost (the default) and don't expose them.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
